@@ -1,5 +1,5 @@
-# kong-demo-playground
-A Kong playground environment for showcasing and testing plugins and common integrations (To be updated as we go) 
+# Kong Redis Cluster
+A playground environment to showcase common use cases of Kong's rate limiting and caching plugins backed up by a redis cluster
 
 ## Prerequisites
 - Kong Gateway Enterprise with a valid license
