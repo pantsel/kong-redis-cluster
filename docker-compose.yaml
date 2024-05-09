@@ -325,8 +325,6 @@ services:
     image: redislabs/redisinsight
     ports:
       - 5540:5540
-    depends_on:
-      - redis-node-5
     volumes:
       - redis-insight-db:/db
     networks:

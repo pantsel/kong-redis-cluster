@@ -49,5 +49,6 @@ The playground environment includes:
 - Kong Manager accessible at http://localhost:8002 or https://localhost:8445.
 - A simple echo server.
 - A Redis cluster consisting of 6 nodes: 3 masters and 3 replicas.
+- Redis insights GUI at http://localhost:5540
 - Example state files in the `./examples` folder to get you started with common use cases.
 
