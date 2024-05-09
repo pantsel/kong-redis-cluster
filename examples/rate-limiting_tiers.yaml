@@ -1,0 +1,147 @@
+# =======================================================================================================================================
+# https://docs.konghq.com/hub/kong-inc/rate-limiting-advanced/how-to/
+#
+# With consumer groups, you can define rate limiting tiers and apply them to subsets of application consumers.
+# This example demonstrates how to use the Rate Limiting Advanced plugin to create rate limiting tiers for different consumer groups.
+# The example defines three consumer groups: Gold, Silver, and Bronze. With rate limits of 20, 10, and 5 requests per minute, respectively.
+# The example also defines four consumers: bob, alice, eve, and mallory. Each consumer is assigned to a consumer group except for mallory.
+# The example also defines a default rate limit of 3 requests per minute for consumers not in any group.
+# The example uses the Key Authentication plugin to authenticate consumers.
+# ========================================================================================================================================
+
+_format_version: "3.0"
+
+consumer_groups:
+- name: Gold    # 20 requests per minute
+  plugins:
+  - name: rate-limiting-advanced
+    config:
+      namespace: kong_rate_limiting_counters_gold
+      limit:
+        - 20
+      window_size:
+        - 60
+      strategy: redis
+      sync_rate: 2
+      redis:
+        password: bitnami
+        cluster_addresses:
+          - redis-node-0:6379
+          - redis-node-1:6379
+          - redis-node-2:6379
+          - redis-node-3:6379
+          - redis-node-4:6379
+          - redis-node-5:6379
+        ssl: true
+        ssl_verify: true
+        server_name: redis_clustering
+- name: Silver  # 10 requests per minute
+  plugins:
+  - name: rate-limiting-advanced
+    config:
+      namespace: kong_rate_limiting_counters_silver
+      limit:
+        - 10
+      window_size:
+        - 60
+      strategy: redis
+      sync_rate: 2
+      redis:
+        password: bitnami
+        cluster_addresses:
+          - redis-node-0:6379
+          - redis-node-1:6379
+          - redis-node-2:6379
+          - redis-node-3:6379
+          - redis-node-4:6379
+          - redis-node-5:6379
+        ssl: true
+        ssl_verify: true
+        server_name: redis_clustering
+- name: Bronze  # 5 requests per minute
+  plugins:
+  - name: rate-limiting-advanced
+    config:
+      namespace: kong_rate_limiting_counters_bronze
+      limit:
+        - 5
+      window_size:
+        - 60
+      strategy: redis
+      sync_rate: 2
+      redis:
+        password: bitnami
+        cluster_addresses:
+          - redis-node-0:6379
+          - redis-node-1:6379
+          - redis-node-2:6379
+          - redis-node-3:6379
+          - redis-node-4:6379
+          - redis-node-5:6379
+        ssl: true
+        ssl_verify: true
+        server_name: redis_clustering
+
+consumers:
+- username: bob
+  keyauth_credentials:
+    - key: bob
+  groups:
+    - name: Gold
+- username: alice
+  keyauth_credentials:
+    - key: alice
+  groups:
+    - name: Silver
+- username: eve
+  keyauth_credentials:
+    - key: eve
+  groups:
+    - name: Bronze
+# Mallory is not in any group, the default rate limit is 3 requests per minute
+- username: mallory
+  keyauth_credentials:
+    - key: mallory
+
+
+plugins:
+- name: key-auth
+  enabled: true
+  service: demo-service
+  config:
+    key_names:
+      - apikey
+# Default rate limit is 3 requests per minute
+- name: rate-limiting-advanced
+  enabled: true
+  service: demo-service
+  # For more information about the plugin configuration, see https://docs.konghq.com/hub/kong-inc/rate-limiting-advanced/
+  config:
+    identifier: consumer
+    limit:
+      - 3 # requests per window [1]
+    window_size:
+      - 60 # window[1] | seconds
+    namespace: kong_rate_limiting_counters # The namespace used in the redis database hash key ex: <timestamp>:<window_size>:<namespace>
+    strategy: redis
+    sync_rate: 2
+    redis:
+      password: bitnami
+      cluster_addresses:
+        - redis-node-0:6379
+        - redis-node-1:6379
+        - redis-node-2:6379
+        - redis-node-3:6379
+        - redis-node-4:6379
+        - redis-node-5:6379
+      ssl: true # Use SSL to connect to Redis
+      ssl_verify: true  # Verify the redis server's SSL certificate. Make sure to include the CA certificate in `lua_ssl_trusted_certificates` if set to true
+      server_name: redis_clustering # Extra verification for the redis server's SSL certificate if ssl_verify is true. `redis_clustering` is the CN of the generated redis.crt.
+
+services:
+  - name: demo-service
+    url: http://echo-server
+    routes:
+      - name: demo-route
+        paths:
+          - /

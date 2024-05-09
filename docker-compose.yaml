@@ -1,0 +1,350 @@
+# Common environment variables
+x-env-redis: &env-redis
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-bitnami}
+  REDIS_TLS_ENABLED: yes
+  REDIS_TLS_PORT: 6379
+  REDIS_PORT: 0
+  REDIS_TLS_AUTH_CLIENTS: "no"
+  REDIS_TLS_CERT_FILE: /opt/bitnami/redis/certs/redis.crt
+  REDIS_TLS_KEY_FILE: /opt/bitnami/redis/certs/redis.key
+  REDIS_TLS_CA_FILE: /opt/bitnami/redis/certs/ca.crt
+  REDIS_NODES: "redis-node-0 redis-node-1 redis-node-2 redis-node-3 redis-node-4 redis-node-5"
+
+x-env-kong: &env-kong
+  KONG_LOG_LEVEL: ${KONG_LOG_LEVEL:-debug}
+  KONG_LICENSE_DATA: ${KONG_LICENSE_DATA}
+  KONG_PASSWORD: ${KONG_PASSWORD:-password}
+  KONG_CLUSTER_CERT: /srv/shared/ssl/cluster.crt
+  KONG_CLUSTER_CERT_KEY: /srv/shared/ssl/cluster.key
+  KONG_LUA_SSL_TRUSTED_CERTIFICATE: "/srv/shared/ssl/ca.crt,/srv/shared/ssl/cluster.crt,system"
+  KONG_NGINX_WORKER_PROCESSES: 2
+  KONG_ANONYMOUS_REPORTS: "off"
+
+x-env-kong-db: &env-kong-db
+  KONG_DATABASE: ${KONG_DATABASE:-postgres}
+  KONG_PG_HOST: ${KONG_PG_HOST:-postgres}
+  KONG_PG_DATABASE: ${POSTGRES_DB:-kong}
+  KONG_PG_USER: ${POSTGRES_USER:-kong}
+  KONG_PG_PASSWORD: ${POSTGRES_PASSWORD:-kong}
+
+networks:
+  kong-net:
+    name: kong-net
+    driver: bridge
+
+services:
+
+  postgres:
+    networks:
+      - kong-net
+    image: postgres:13.1
+    container_name: postgres
+    hostname: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "kong"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+    restart: on-failure
+    stdin_open: true
+    tty: true
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-kong}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kong}
+      POSTGRES_USER: ${POSTGRES_USER:-kong}
+      POSTGRES_PG_TIMEOUT: 60000
+  
+  kong-migrations:
+    networks:
+      - kong-net
+    image: ${KONG_IMAGE:-kong/kong-gateway:3.6.0.0}
+    container_name: kong-migrations
+    depends_on:
+      - postgres
+    command: kong migrations bootstrap
+    restart: on-failure
+    environment:
+      <<: *env-kong-db
+  
+  kong-migrations-up:
+    networks:
+      - kong-net
+    image: ${KONG_IMAGE:-kong/kong-gateway:3.6.0.0}
+    container_name: kong-migrations-up
+    depends_on:
+      - kong-migrations
+    command: kong migrations up && kong-migrations finish
+    restart: on-failure
+    environment:
+      <<: *env-kong-db
+  
+  kong-cp:
+    networks:
+      - kong-net
+    image: ${KONG_IMAGE:-kong/kong-gateway:3.6.0.0}
+    container_name: kong-cp
+    hostname: kong-cp
+    user: kong
+    depends_on:
+      - kong-migrations-up
+    volumes:
+      - ${PWD}/.certs:/srv/shared/ssl
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+    restart: on-failure
+    ports:
+      - "8001-8006:8001-8006/tcp"
+      - "8100:8100/tcp"
+      - "8444-8447:8444-8447/tcp"
+    environment:
+      <<: [*env-kong, *env-kong-db]
+      KONG_ROLE: control_plane
+      KONG_ADMIN_LISTEN: "0.0.0.0:8001, 0.0.0.0:8444 http2 ssl"
+      KONG_ADMIN_GUI_LISTEN: "0.0.0.0:8002, 0.0.0.0:8445 http2 ssl"
+      KONG_STATUS_LISTEN: "0.0.0.0:8100 http2"
+      KONG_CLUSTER_LISTEN: "0.0.0.0:8005"
+      KONG_CLUSTER_TELEMETRY_LISTEN: "0.0.0.0:8006"
+      KONG_AUDIT_LOG: "off"
+      KONG_STATUS_SSL_CERT_KEY: "/srv/shared/ssl/server.key"
+      KONG_STATUS_SSL_CERT: "/srv/shared/ssl/server.crt"
+      KONG_ENFORCE_RBAC: "off"
+      KONG_ADMIN_SSL_CERT_KEY: "/srv/shared/ssl/server.key"
+      KONG_ADMIN_SSL_CERT: "/srv/shared/ssl/server.crt"
+      KONG_ADMIN_GUI_SSL_CERT_KEY: "/srv/shared/ssl/server.key"
+      KONG_ADMIN_GUI_SSL_CERT: "/srv/shared/ssl/server.crt"
+  
+  kong-dp:
+    networks:
+      - kong-net
+    image: ${KONG_IMAGE:-kong/kong-gateway:3.6.0.0}
+    container_name: kong-dp
+    hostname: kong-dp
+    depends_on:
+      - kong-cp
+    volumes:
+      - ${PWD}/.certs:/srv/shared/ssl
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+    restart: on-failure
+    ports:
+      - "8000:8000/tcp"
+      - "8443:8443/tcp"
+      - "8101:8101/tcp"
+    environment:
+      <<: [*env-kong]
+      KONG_ROLE: "data_plane"
+      KONG_CLUSTER_CONTROL_PLANE: "kong-cp:8005"
+      KONG_CLUSTER_TELEMETRY_ENDPOINT: "kong-cp:8006"
+      KONG_PROXY_LISTEN: "0.0.0.0:8000, 0.0.0.0:8443 http2 ssl"
+      KONG_STREAM_LISTEN: "0.0.0.0:5555, 0.0.0.0:5556 ssl reuseport backlog=65536"
+      KONG_STATUS_LISTEN: "0.0.0.0:8101"
+      KONG_DATABASE: "off"
+      KONG_SSL_CERT_KEY: "/srv/shared/ssl/server.key"
+      KONG_SSL_CERT: "/srv/shared/ssl/server.crt"
+
+  echo-server:
+    hostname: echo-server
+    container_name: echo-server
+    networks:
+      - kong-net
+    image: ealen/echo-server
+    ports:
+      - 3000:80
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+    restart: on-failure
+  
+  redis-node-0:
+    image: ${REDIS_IMAGE:-bitnami/redis-cluster:latest}
+    container_name: redis-node-0
+    hostname: redis-node-0
+    ports:
+      - 7000:6379
+    networks:
+      - kong-net
+    volumes:
+      - redis-cluster_data-0:/bitnami/redis/data
+      - ${PWD}/.certs:/opt/bitnami/redis/certs
+    environment:
+      <<: *env-redis
+      REDIS_REPLICATION_MODE: master
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "-a", "bitnami", "--tls", "--cacert", "/opt/bitnami/redis/certs/ca.crt", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  redis-node-1:
+    container_name: redis-node-1
+    hostname: redis-node-1
+    image: ${REDIS_IMAGE:-bitnami/redis-cluster:latest}
+    ports:
+      - 7001:6379
+    networks:
+      - kong-net
+    volumes:
+      - redis-cluster_data-1:/bitnami/redis/data
+      - ${PWD}/.certs:/opt/bitnami/redis/certs
+    environment:
+      <<: *env-redis
+      REDIS_REPLICATION_MODE: master
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "-a", "bitnami", "--tls", "--cacert", "/opt/bitnami/redis/certs/ca.crt", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  redis-node-2:
+    container_name: redis-node-2
+    hostname: redis-node-2
+    image: ${REDIS_IMAGE:-bitnami/redis-cluster:latest}
+    ports:
+      - 7002:6379
+    networks:
+      - kong-net
+    volumes:
+      - redis-cluster_data-2:/bitnami/redis/data
+      - ${PWD}/.certs:/opt/bitnami/redis/certs
+    environment:
+      <<: *env-redis
+      REDIS_REPLICATION_MODE: master
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "-a", "bitnami", "--tls", "--cacert", "/opt/bitnami/redis/certs/ca.crt", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  redis-node-3:
+    container_name: redis-node-3  
+    hostname: redis-node-3
+    image: ${REDIS_IMAGE:-bitnami/redis-cluster:latest}
+    ports:
+      - 7003:6379
+    networks:
+      - kong-net
+    volumes:
+      - redis-cluster_data-3:/bitnami/redis/data
+      - ${PWD}/.certs:/opt/bitnami/redis/certs
+    environment:
+      <<: *env-redis
+      REDIS_REPLICATION_MODE: slave
+      REDIS_MASTER_HOST: redis-node-0
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "-a", "bitnami", "--tls", "--cacert", "/opt/bitnami/redis/certs/ca.crt", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  redis-node-4:
+    container_name: redis-node-4
+    hostname: redis-node-4
+    image: ${REDIS_IMAGE:-bitnami/redis-cluster:latest}
+    ports:
+      - 7004:6379
+    networks:
+      - kong-net
+    volumes:
+      - redis-cluster_data-4:/bitnami/redis/data
+      - ${PWD}/.certs:/opt/bitnami/redis/certs
+    environment:
+      <<: *env-redis
+      REDIS_REPLICATION_MODE: slave
+      REDIS_MASTER_HOST: redis-node-1
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "-a", "bitnami", "--tls", "--cacert", "/opt/bitnami/redis/certs/ca.crt", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+  
+  redis-node-5:
+    container_name: redis-node-5
+    hostname: redis-node-5
+    image: ${REDIS_IMAGE:-bitnami/redis-cluster:latest}
+    ports:
+      - 7005:6379
+    networks:
+      - kong-net
+    volumes:
+      - redis-cluster_data-5:/bitnami/redis/data
+      - ${PWD}/.certs:/opt/bitnami/redis/certs
+    environment:
+      <<: *env-redis
+      REDIS_REPLICATION_MODE: slave
+      REDIS_MASTER_HOST: redis-node-2
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "-a", "bitnami", "--tls", "--cacert", "/opt/bitnami/redis/certs/ca.crt", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  redis-cluster-init:
+    container_name: redis-cluster-init
+    hostname: redis-cluster-init
+    image: ${REDIS_IMAGE:-bitnami/redis-cluster:latest}
+    command: |
+      redis-cli -a bitnami --cluster create redis-node-0:6379 redis-node-1:6379 redis-node-2:6379 redis-node-3:6379 redis-node-4:6379 redis-node-5:6379 --cluster-replicas 1 --cluster-yes --tls --cacert /opt/bitnami/redis/certs/ca.crt
+    depends_on:
+      redis-node-0:
+        condition: service_healthy
+      redis-node-1:
+        condition: service_healthy
+      redis-node-2:
+        condition: service_healthy
+      redis-node-3:
+        condition: service_healthy
+      redis-node-4:
+        condition: service_healthy
+      redis-node-5:
+        condition: service_healthy
+    networks:
+      - kong-net
+    volumes:
+      - ${PWD}/.certs:/opt/bitnami/redis/certs:rw
+    environment:
+      <<: *env-redis
+
+  # Redis insight GUI
+  redis-insight:
+    image: redislabs/redisinsight
+    ports:
+      - 5540:5540
+    depends_on:
+      - redis-node-5
+    volumes:
+      - redis-insight-db:/db
+    networks:
+      - kong-net
+
+volumes:
+  pgdata:
+  redis-cluster_data-0:
+    driver: local
+  redis-cluster_data-1:
+    driver: local
+  redis-cluster_data-2:
+    driver: local
+  redis-cluster_data-3:
+    driver: local
+  redis-cluster_data-4:
+    driver: local
+  redis-cluster_data-5:
+    driver: local
+  redis-insight-db:
+    driver: local

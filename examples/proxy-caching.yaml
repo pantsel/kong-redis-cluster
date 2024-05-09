@@ -1,0 +1,47 @@
+# =====================================================================================================================
+# This is a simple example of a Kong configuration file that demonstrates how to use the proxy-cache-advanced plugin.
+# This example creates a service and applies the proxy-cache-advanced plugin to it.
+# The proxy-cache-advanced plugin is configured to cache responses with a 200 status code, GET and HEAD request methods, 
+# and specific content types.
+# The plugin is configured to cache responses for 5 minutes.
+# The plugin is configured to use a Redis cluster with six nodes.
+# ======================================================================================================================
+
+_format_version: "3.0"
+
+services:
+  - name: demo-service
+    url: http://echo-server
+    plugins:
+      - name: proxy-cache-advanced
+        enabled: true
+        config:
+          response_code:
+          - 200
+          request_method:
+          - GET
+          - HEAD
+          content_type:
+          - text/plain
+          - application/json
+          - application/json; charset=utf-8
+          cache_ttl: 300 # 5 minutes
+          cache_control: false
+          strategy: redis
+          bypass_on_err: true # Bypass cache on error and resolve the request upstream
+          redis:
+            password: bitnami
+            database: 2 # Redis database index to use, default is 0
+            ssl: true # Use SSL to connect to Redis
+            ssl_verify: true # Verify the redis server's SSL certificate
+            cluster_addresses:
+              - redis-node-0:6379
+              - redis-node-1:6379
+              - redis-node-2:6379
+              - redis-node-3:6379
+              - redis-node-4:6379
+              - redis-node-5:6379
+    routes:
+      - name: demo-route
+        paths:
+          - /

@@ -1,0 +1,47 @@
+# =============================================================================================================
+# This is a simple example of a Kong configuration file that demonstrates how to use the rate-limiting plugin.
+# This example creates a service and applies the rate-limiting plugin to it. 
+# The rate-limiting plugin is configured to limit the number of requests to 10 per 30 seconds and 100 per hour.
+# The rate-limiting plugin is applied to all requests to the service.
+# The rate-limiting plugin is configured to use a Redis cluster with six nodes.
+# =============================================================================================================
+
+_format_version: "3.0"
+
+services:
+  - name: demo-service
+    url: http://echo-server
+    plugins:
+    - name: rate-limiting-advanced
+      enabled: true
+      # For more information about the plugin configuration, see https://docs.konghq.com/hub/kong-inc/rate-limiting-advanced/
+      config:
+        identifier: ip
+        limit:
+          - 10 # requests per window [1]
+          - 100 # requests per window [2]
+        window_size:
+          - 30 # window[1] | seconds
+          - 3600  # window[2] | 60 secs/min * 60 minutes = 1 hour
+        window_type: sliding # sliding or fixed
+        namespace: kong_rate_limiting_counters # The namespace used in the redis database hash key ex: <timestamp>:<window_size>:<namespace>
+        hide_client_headers: false # Hide rate limiting related the headers from the client
+        strategy: redis
+        sync_rate: 2 # -1 = in memory, 0 = sync, > 0 = async
+        redis:
+          password: bitnami
+          cluster_addresses:
+            - redis-node-0:6379
+            - redis-node-1:6379
+            - redis-node-2:6379
+            - redis-node-3:6379
+            - redis-node-4:6379
+            - redis-node-5:6379
+          ssl: true # Use SSL to connect to Redis
+          ssl_verify: true  # Verify the redis server's SSL certificate. Make sure to include the CA certificate in `lua_ssl_trusted_certificates` if set to true
+          server_name: redis_clustering # Extra verification for the redis server's SSL certificate if ssl_verify is true. `redis_clustering` is the CN of the generated redis.crt.
+        
+    routes:
+      - name: demo-route
+        paths:
+          - /

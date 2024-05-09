@@ -1,0 +1,90 @@
+#=====================================================================================================================================
+# https://docs.konghq.com/hub/kong-inc/rate-limiting-advanced/how-to/peak-traffic-rate-limit/
+#
+# You can set the rate limit based on peak or non-peak time by using the Pre-function and the Rate Limiting Advanced plugins together.
+# This example creates two Kong Gateway routes: one to handle peak traffic, and one to handle off-peak traffic. 
+# Each route has a different rate limit, which gets applied by the Rate Limiting Advanced plugin. 
+# The Pre-function plugin runs a Lua function in the rewrite phase, sending traffic to one of these Kong Gateway 
+# routes based on your defined peak and off-peak settings.
+#=====================================================================================================================================
+_format_version: "3.0"
+
+plugins:
+  - name: pre-function
+    enabled: true
+    config:
+      rewrite:
+        - |
+          local hour = os.date("*t").hour 
+          if hour >= 8 and hour <= 17 
+          then
+              kong.service.request.set_header("X-Peak","true") 
+          else
+              kong.service.request.set_header("X-Off-Peak","true") 
+          end
+
+services:
+  - name: demo-service
+    url: http://echo-server
+    routes:
+      - name: demo-route-peak
+        headers:
+          X-Peak:
+            - "true"
+        paths:
+          - /
+        plugins:
+          - name: rate-limiting-advanced
+            enabled: true
+            config:
+              identifier: ip
+              limit:
+                - 10 # requests per window [1]
+              window_size:
+                - 30 # window[1] | seconds
+              namespace: kong_rate_limiting_counters_peak
+              strategy: redis
+              sync_rate: 2 # -1 = in memory, 0 = sync, > 0 = async
+              redis:
+                password: bitnami
+                cluster_addresses:
+                  - redis-node-0:6379
+                  - redis-node-1:6379
+                  - redis-node-2:6379
+                  - redis-node-3:6379
+                  - redis-node-4:6379
+                  - redis-node-5:6379
+                ssl: true
+                ssl_verify: true
+                server_name: redis_clustering
+
+      - name: demo-route-off-peak
+        headers:
+          X-Off-Peak:
+            - "true"
+        paths:
+          - /
+        plugins:
+          - name: rate-limiting-advanced
+            enabled: true
+            config:
+              identifier: ip
+              limit:
+                - 5 # requests per window [1]
+              window_size:
+                - 30 # window[1] | seconds
+              namespace: kong_rate_limiting_counters_off_peak
+              strategy: redis
+              sync_rate: 2 # -1 = in memory, 0 = sync, > 0 = async
+              redis:
+                password: bitnami
+                cluster_addresses:
+                  - redis-node-0:6379
+                  - redis-node-1:6379
+                  - redis-node-2:6379
+                  - redis-node-3:6379
+                  - redis-node-4:6379
+                  - redis-node-5:6379
+                ssl: true
+                ssl_verify: true
+                server_name: redis_clustering
